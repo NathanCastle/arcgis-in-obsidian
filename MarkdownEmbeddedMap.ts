@@ -13,6 +13,8 @@ export class MarkdownEmbeddedMap extends MarkdownRenderChild {
   is3D: boolean;
   basemapStyle?: string;
   settings: ArcGISInObsidianSettings;
+  center: [number, number] = [-118.805, 34.027];
+  zoom: number = 13;
   view?: MapView;
   mapId?: string;
 
@@ -35,12 +37,32 @@ export class MarkdownEmbeddedMap extends MarkdownRenderChild {
           break;
         case 'id':
           this.mapId = value.trim();
+          break;
+        case 'zoom':
+          this.zoom = Number.parseInt(value.trim())
+          break;
+        case 'center':
+          try {
+            let stripped = value.trim().replace('[', '').replace(']', '').split(',');
+            let x = Number.parseFloat(stripped[0])
+            let y = Number.parseFloat(stripped[1])
+            console.log(`x:${x}, y:${y}`)
+            this.center = [Number.parseFloat(stripped[0]), Number.parseFloat(stripped[1])]
+          }
+          catch{
+            console.log("ArcGIS - Error parsing center coordinates")
+          }
+          break;
       }
     }
   }
 
   onload() {
-    let outer = this.containerEl.createEl("div", { cls: "outerMapContainer" });
+    console.log('loading mapview')
+    let outerRoot = this.containerEl.createDiv();
+    let shadowRoot = outerRoot.attachShadow({mode: 'open'});
+    let outer = shadowRoot.createEl('div', {});
+    shadowRoot.appendChild(outer)
     outer.setAttr("style", `height: ${this.minHeight}px;`);
     let reference = this.containerEl.createEl("div", { cls: "viewDiv" });
     outer.appendChild(reference);
@@ -48,35 +70,6 @@ export class MarkdownEmbeddedMap extends MarkdownRenderChild {
     //esriConfig.assetsPath = "plugins/arcgis-in-obsidian/node_modules/@arcgis/core/assets";
 /// This is all an attempt to fix the issue with app:// urls not working with fetch. That is caused by above line, which is supposedly necessary to get this working on node.
 
-    // Work around request not wanting to do images by default
-    esriConfig.request.interceptors.push({
-  // set the `urls` property to the URL of the FeatureLayer so that this
-  // interceptor only applies to requests made to the FeatureLayer URL
-  urls: ["app://", "https://"],
-  // use the BeforeInterceptorCallback to check if the query of the
-  // FeatureLayer has a maxAllowableOffset property set.
-  // if so, then set the maxAllowableOffset to 0
-  before: function(params) {
-    if (params.requestOptions.responseType === "image"){
-      params.requestOptions["magictag"] = "image"
-      params.requestOptions.responseType = "array-buffer"
-    }
-  },
-  // use the AfterInterceptorCallback to check if `ssl` is set to 'true'
-  // on the response to the request, if it's set to 'false', change
-  // the value to 'true' before returning the response
-  after: function(response) {
-    if (response.requestOptions.responseType === "array-buffer" && "magictag" in response.requestOptions){
-      response.requestOptions.responseType = "image"
-      var img = new Image()
-      img.setAttribute("src", response.url)
-      img.setAttribute("crossorigin", "anonymous")
-      //console.log(response)
-      img.decode()
-      response.data = img
-    }
-  }
-});
 
 
     var map: ArcGISMap
@@ -97,13 +90,13 @@ export class MarkdownEmbeddedMap extends MarkdownRenderChild {
 
     this.view = new MapView({
       map: map,
-      center: [-118.805, 34.027],
-      zoom: 13, // scale: 72223.819286
+      center: this.center,
+      zoom: this.zoom, // scale: 72223.819286
       container: reference,
       constraints: {
         snapToZoom: false
       }
     });
-    this.containerEl.replaceWith(outer);
+    this.containerEl.replaceWith(shadowRoot);
   }
 }

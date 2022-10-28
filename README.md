@@ -1,68 +1,35 @@
-## Obsidian Sample Plugin
+# ArcGIS in Obsidian
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+Experimental project to integrate Obsidian and ArcGIS using the ArcGIS API for JavaScript.
 
-This project uses Typescript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in Typescript Definition format, which contains TSDoc comments describing what it does.
+> **Note**: This project is for my own education, and due to limitations mentioned below is not suitable for production use.
 
-**Note:** The Obsidian API is still in early alpha and is subject to change at any time!
+## Features
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Changes the default font color to red using `styles.css`.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- **Embed a basic map in a note**: To embed a map view showing a basemap, add a code block with the language set to `arcgis`.
 
-### First time developing plugins?
+      ```arcgis
+      basemap: imagery
+      ```
+- **Embed a web map by ID**: To embed a web map, add a code block with arcgis language and set an id:
 
-Quick starting guide for new plugin devs:
+      ```arcgis
+      id: 64df037d4b3949a68398d3f20da78c17
+      ```
+- **Define center and scale**: You can specify the center of the initial viewpoint and the initial scale:
 
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+      ```arcgis
+      basemap: arcgis-imagery
+      center: [-122.64932766603697, 45.50838206781943]
+      zoom: 15
+      ```
 
-### Releasing new releases
+Simple maps embedded in note:
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+![Screenshot showing maps embedded in a note](readme_simple_screenshot.png)
 
-### Adding your plugin to the community plugin list
+## Limitations
 
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+- The ArcGIS API does not support loading images in a node environment. For development use, request.js can be patched to remove the node check, and imagery basemaps will work correctly, but that violates the terms of use.
+- The ArcGIS API by default does not render vector tile layers in Electron apps where `nodeIntegrationInWorkers` is true, which appears to be the case for Obsidian.
 
-### How to use
-
-- Clone this repo.
-- `npm i` or `yarn` to install dependencies
-- `npm run dev` to start compilation in watch mode.
-
-### Manually installing the plugin
-
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-### Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
-
-
-### API Documentation
-
-See https://github.com/obsidianmd/obsidian-api
