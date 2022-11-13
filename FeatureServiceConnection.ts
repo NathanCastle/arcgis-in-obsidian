@@ -1,143 +1,206 @@
-import esriConfig from '@arcgis/core/config';
+import esriConfig from "@arcgis/core/config";
 import PortalItemResource from "@arcgis/core/portal/PortalItemResource";
-import { ArcGISInObsidianSettings } from './main';
+import { ArcGISInObsidianSettings } from "./main";
 import { readFile } from "fs";
-import { MetadataCache, Vault, Workspace, App, TFile } from 'obsidian';
-import FeatureServiceSyncSetting from 'FeatureServiceSyncSetting';
-import { addressToLocations, locationToAddress } from "@arcgis/core/rest/locator";
-import FeatureLayer from '@arcgis/core/layers/FeatureLayer';
-import Graphic from '@arcgis/core/Graphic'
-import {Point} from '@arcgis/core/geometry'
+import { MetadataCache, Vault, Workspace, App, TFile } from "obsidian";
+import FeatureServiceSyncSetting from "FeatureServiceSyncSetting";
+import {
+	addressToLocations,
+	locationToAddress,
+} from "@arcgis/core/rest/locator";
+import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
+import Graphic from "@arcgis/core/Graphic";
+import { Point } from "@arcgis/core/geometry";
 
 export class FeatureServiceConnection {
-    settings: ArcGISInObsidianSettings;
-    app: App;
-    connections?: Map<string, FeatureLayer>;
+	settings: ArcGISInObsidianSettings;
+	app: App;
+	connections?: Map<string, FeatureLayer>;
 
-  constructor(settings: ArcGISInObsidianSettings,app:App) {
-    this.settings = settings;
-    this.app = app;
-    this.connections = new Map();
-  }
+	constructor(settings: ArcGISInObsidianSettings, app: App) {
+		this.settings = settings;
+		this.app = app;
+		this.connections = new Map();
+	}
 
-  establishConnections(){
-    for(var config of this.settings.featureServiceSync){
-        if (config.featureServiceUrl){
-            let featureLayer = new FeatureLayer({
-                url: config.featureServiceUrl
-            });
-            // TODO = warn if layer doesn't support editing
-            this.connections.set(config.featureServiceUrl, featureLayer);
-        }
-    }
-  }
+	establishConnections() {
+		for (var config of this.settings.featureServiceSync) {
+			if (config.featureServiceUrl) {
+				let featureLayer = new FeatureLayer({
+					url: config.featureServiceUrl,
+				});
+				// TODO = warn if layer doesn't support editing
+				this.connections.set(config.featureServiceUrl, featureLayer);
+			}
+		}
+	}
 
-  async syncIndividualFile(config:FeatureServiceSyncSetting, file:TFile, location: Point){
-    console.log("Getting feature layer")
-    let featureLayer = this.connections.get(config.featureServiceUrl);
-    console.dir(featureLayer);
-    let metadata = this.app.metadataCache.getFileCache(file);
+	getFieldMapAsObj(
+		config: FeatureServiceSyncSetting
+	): { obsYaml: string; arcField: string }[] | undefined {
+		if (!config.fieldMap || config.fieldMap === "") {
+			return undefined;
+		}
 
-    let obsidianUrl = `obsidian://open?vault=${file.vault.getName()}&file=${file.path.replace(/" "/g, "%20")}`
+		let maps = config.fieldMap.split(",");
 
-     var edits:__esri.FeatureLayerApplyEditsEdits = {
-        addFeatures: [],
-        updateFeatures: []
-     };
-    // sync feature if indicated
-    if (metadata.frontmatter['OBJECTID']){
-        let existingFeature = (await featureLayer.queryFeatures({
-            outFields: ['OBJECTID', 'TITLE', 'OBSIDIAN_LINK'],
-            where: `OBJECTID = ${metadata.frontmatter['OBJECTID']}`
-        })).features.first();
-        console.log("found existing matching feature for file")
-        console.dir(existingFeature);
+		return maps.map((val, idx, arr) => {
+			let [obs, arcField] = val.split(":", 2);
+			return { obsYaml: obs, arcField: arcField };
+		});
+	}
 
-        existingFeature.attributes["TITLE"] = file.basename;
-        existingFeature.attributes["OBSIDIAN_LINK"] = obsidianUrl;
+	async syncIndividualFile(
+		config: FeatureServiceSyncSetting,
+		file: TFile,
+		location: Point
+	) {
+		// prep
+		let featureLayer = this.connections.get(config.featureServiceUrl);
+		let metadata = this.app.metadataCache.getFileCache(file);
+		let obsidianUrl = `obsidian://open?vault=${file.vault.getName()}&file=${file.path.replace(
+			/" "/g,
+			"%20"
+		)}`;
+		let fieldstoSync = this.getFieldMapAsObj(config);
 
-        edits.updateFeatures.push(existingFeature);
-        featureLayer.applyEdits(edits);
-        return;
-    }
-    console.log("Creating new feature")
-     let graphic = new Graphic();
-     graphic.attributes = {"TITLE": file.basename, "OBSIDIAN_LINK": obsidianUrl};
-     graphic.geometry = new Point({x: location.x, y: location.y})
-     console.log("Created local feature")
-     console.dir(graphic);
+		var edits: __esri.FeatureLayerApplyEditsEdits = {
+			addFeatures: [],
+			updateFeatures: [],
+		};
+		// sync feature if indicated
+		// TODO = refactor to share code between add and update
+		if (metadata.frontmatter["OBJECTID"]) {
+			let existingFeature = (
+				await featureLayer.queryFeatures({
+					outFields: ["*"],
+					where: `OBJECTID = ${metadata.frontmatter["OBJECTID"]}`,
+				})
+			).features.first();
+			if (existingFeature) {
+				existingFeature.attributes[config.titleField ?? "TITLE"] =
+					file.basename;
+				existingFeature.attributes["OBSIDIAN_LINK"] = obsidianUrl;
+				existingFeature.attributes["TEST_ATTRIBUE"] = "yolo";
 
-     edits.addFeatures.push(graphic);
-     console.log("Adding feature to edits list")
-     console.dir(edits);
-     let editsResults = await featureLayer.applyEdits(edits);
-     console.log("Finished applying edits with following result");
-     console.dir(editsResults);
+				// apply field map values
+				if (fieldstoSync) {
+					fieldstoSync.map((fieldPair, idx) => {
+						if (metadata.frontmatter[fieldPair.obsYaml]) {
+							existingFeature.attributes[fieldPair.arcField] =
+								metadata.frontmatter[fieldPair.obsYaml];
+						}
+					});
+				}
 
-     if (editsResults.addFeatureResults){
-        let addedFeature = editsResults.addFeatureResults.first()
-        let objectId = addedFeature.objectId;
-        let readedFile = await this.app.vault.read(file);
-        let newFile = readedFile.replace("---\ngeo:", `---\nOBJECTID: ${objectId}\ngeo:`)
-        await this.app.vault.modify(file, newFile)
-     }
-  }
+				edits.updateFeatures.push(existingFeature);
+				featureLayer.applyEdits(edits);
+				return;
+			}
+		}
+		let graphic = new Graphic();
+		graphic.attributes = {
+			TITLE: file.basename,
+			OBSIDIAN_LINK: obsidianUrl,
+			TEST_ATTRIBUTE: "yolo",
+		};
+		// apply field map values
+		if (fieldstoSync) {
+			fieldstoSync.map((fieldPair, idx) => {
+				if (metadata.frontmatter[fieldPair.obsYaml]) {
+					graphic.attributes[fieldPair.arcField] =
+						metadata.frontmatter[fieldPair.obsYaml];
+				}
+			});
+		}
+		graphic.geometry = new Point({ x: location.x, y: location.y });
+		console.log("Created local feature");
+		console.dir(graphic);
 
-  async syncOne(config: FeatureServiceSyncSetting){
-    // scan vault for matching documents
-    let allFiles = this.app.vault.getFiles();
+		edits.addFeatures.push(graphic);
+		console.log("Adding feature to edits list");
+		console.dir(edits);
+		let editsResults = await featureLayer.applyEdits(edits);
+		console.log("Finished applying edits with following result");
+		console.dir(editsResults);
 
-    let regexTest = new RegExp(config.noteIncludePattern ?? "*")
-    let matchingFiles = allFiles.filter((file, index) => {
-        if (file.extension != "md") return false;
+		if (editsResults.addFeatureResults) {
+			let addedFeature = editsResults.addFeatureResults.first();
+			let objectId = addedFeature.objectId;
+			let readedFile = await this.app.vault.read(file);
+			let newFile = readedFile.replace(
+				"---\ngeo:",
+				`---\nOBJECTID: ${objectId}\ngeo:`
+			);
+			await this.app.vault.modify(file, newFile);
+		}
+	}
 
-        return regexTest.test(file.basename)
-    })
+	async syncOne(config: FeatureServiceSyncSetting) {
+		// scan vault for matching documents
+		let allFiles = this.app.vault.getFiles();
 
-    // extract metadata from notes
-    let geoFiles = (await Promise.all(matchingFiles.map(async (file, idx, arr) => {
-        let metadata = this.app.metadataCache.getFileCache(file);
-        if (!metadata.frontmatter){
-            return null;
-        }
-        let geotag = metadata.frontmatter['geo'];
+		let regexTest = new RegExp(config.noteIncludePattern ?? "*");
+		let matchingFiles = allFiles.filter((file, index) => {
+			if (file.extension != "md") return false;
 
-        if (!geotag){
-            return null;
-        }
+			return regexTest.test(file.basename);
+		});
 
-        if (typeof geotag == "string"){
-            // process single location
-            let location = await addressToLocations("https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer", 
-            {
-                address: {SingleLine: geotag}
-            })
+		// extract metadata from notes
+		let geoFiles = (
+			await Promise.all(
+				matchingFiles.map(async (file, idx, arr) => {
+					let metadata = this.app.metadataCache.getFileCache(file);
+					if (!metadata.frontmatter) {
+						return null;
+					}
+					let geotag = metadata.frontmatter["geo"];
 
-            let point = location.first().location
+					if (!geotag) {
+						return null;
+					}
 
-            return {file: file, location: point}
-        }
-        // Todo: support polypoints
+					if (typeof geotag == "string") {
+						// process single location
+						let location = await addressToLocations(
+							"https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer",
+							{
+								address: { SingleLine: geotag },
+							}
+						);
 
-    }))).filter((fileGeoPair, idx) => fileGeoPair != null);
-    
-    //console.dir(geoFiles);
+						let point = location.first().location;
 
-    await Promise.all(geoFiles.map((fileGeoPair, idx, arr) => {
-        this.syncIndividualFile(config, fileGeoPair.file, fileGeoPair.location);
-    }))
-  }
+						return { file: file, location: point };
+					}
+					// Todo: support polypoints
+				})
+			)
+		).filter((fileGeoPair, idx) => fileGeoPair != null);
 
-  syncAll(){
+		//console.dir(geoFiles);
 
-    // establish connection
-    this.establishConnections();
+		await Promise.all(
+			geoFiles.map((fileGeoPair, idx, arr) => {
+				this.syncIndividualFile(
+					config,
+					fileGeoPair.file,
+					fileGeoPair.location
+				);
+			})
+		);
+	}
 
-    // read sync configurations
-    for(var config of this.settings.featureServiceSync){
-        this.syncOne(config);
-    }
+	syncAll() {
+		// establish connection
+		this.establishConnections();
 
-    // sync each configuration
-  }
+		// read sync configurations
+		for (var config of this.settings.featureServiceSync) {
+			this.syncOne(config);
+		}
+
+		// sync each configuration
+	}
 }

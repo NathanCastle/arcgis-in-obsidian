@@ -15,6 +15,7 @@ import IdentityManager from "@arcgis/core/identity/IdentityManager"
 import ServerInfo from "@arcgis/core/identity/ServerInfo"
 import { FeatureServiceConnection } from "FeatureServiceConnection";
 import FeatureServiceSyncSetting from "FeatureServiceSyncSetting";
+import SettingsTab from "Settings/SettingsTab";
 
 export interface ArcGISInObsidianSettings {
 	arcgisAPIKey: string;
@@ -28,7 +29,7 @@ const DEFAULT_SETTINGS: ArcGISInObsidianSettings = {
 	featureServiceSync: []
 };
 
-export default class MyPlugin extends Plugin {
+export default class ArcGISInObsidian extends Plugin {
 	settings: ArcGISInObsidianSettings;
 	connectionManager?: FeatureServiceConnection;
 
@@ -76,7 +77,7 @@ export default class MyPlugin extends Plugin {
 		// This adds a complex command that can check whether the current state of the app allows execution of the command
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+		this.addSettingTab(new SettingsTab(this.app, this));
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
@@ -109,137 +110,3 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const { containerEl } = this;
-
-		containerEl.empty();
-
-		containerEl.createEl("h2", { text: "ArcGIS Online settings" });
-
-		// API key
-		new Setting(containerEl)
-			.setName("ArcGIS Developers API Key")
-			.setDesc("You can get a developer key at developers.arcgis.com")
-			.addText((text) =>
-				text
-					.setPlaceholder("API Key")
-					.setValue(this.plugin.settings.arcgisAPIKey)
-					.onChange(async (value) => {
-						this.plugin.settings.arcgisAPIKey = value;
-						await this.plugin.saveSettings();
-					})
-			);
-		containerEl.createEl("h3", {text: "ArcGIS Account Log In"});
-		containerEl.createEl("p", {text: "You must sign in to an account to use feature service syncing"});
-		let AuthStatusDisplay = containerEl.createEl('p', {text: "not signed in"});
-		const signInButton = containerEl.createEl("button", {text: "sign in"});
-
-		async function renderAuthStatus(){
-			if (this.plugin.settings.arcgisAuthToken === ""){
-				AuthStatusDisplay.innerHTML = "not signed in";
-				return;
-			}
-
-			// otherwise, reset auth and try again
-			IdentityManager.registerToken(
-				{
-					server: "https://www.arcgis.com/sharing/rest",
-					token: this.plugin.settings.arcgisAuthToken
-				});
-				try {
-					let credential = await IdentityManager.checkSignInStatus("https://www.arcgis.com/sharing/rest")
-					console.dir(credential);
-					AuthStatusDisplay.innerHTML = `${credential.userId} signed in. Expires ${credential.expires}`
-				}
-				catch(_){
-					this.plugin.settings.arcgisAuthToken = "";
-					AuthStatusDisplay.innerHTML = "not signed in";
-				}
-		}
-		renderAuthStatus.bind(this)();
-
-		signInButton.addEventListener('click', async () => {
-			console.log("setting token validity")
-			IdentityManager.tokenValidity = 43200;
-			try {
-				console.log("cehcking sign in status")
-				const newCredential = await IdentityManager.getCredential("https://www.arcgis.com/sharing/rest")
-				//const newCredential = await IdentityManager.checkSignInStatus("https://www.arcgis.com/sharing/rest")
-				/*
-				const sInfo = new ServerInfo({
-					tokenServiceUrl: "",
-					server: ""
-				});
-				IdentityManager.generateToken(sInfo, {
-					username:"",
-					password: ""
-				});
-				*/
-				this.plugin.settings.arcgisAuthToken = newCredential.token;
-				await this.plugin.saveSettings();
-				renderAuthStatus.bind(this)()
-			}
-			catch(ex){
-				console.log('error signing in')
-				console.dir(ex);
-
-			}
-		});
-
-		// Feature service settings
-		containerEl.createEl("h2", {text: "Feature Service Synchronization"});
-		containerEl.createEl("p", {text: "Connect to feature services and automatically create features."})
-		var addButton = containerEl.createEl("button", {text: "Add a feature service connection"});
-		const featureServiceSettingArea = containerEl.createDiv();
-
-		function renderFeatureServiceSettingArea(){
-			// remove existing content
-			featureServiceSettingArea.innerHTML = "";
-			// render settings
-			for(var existingFeatureServiceSetting of this.plugin.settings.featureServiceSync){
-				const fsSettingParent = featureServiceSettingArea.createDiv();
-				new Setting(fsSettingParent).setName("Feature Service URL").setDesc("URL to the feature service. Must be editable. Should end in a number")
-				.addText((text) => 
-				text.setPlaceholder("URL").setValue(existingFeatureServiceSetting.featureServiceUrl).onChange(async (value) => {
-					existingFeatureServiceSetting.featureServiceUrl = value;
-					await this.plugin.saveSettings();
-				}));
-				new Setting(fsSettingParent).setName("Note include pattern").setDesc("Pattern that defines which notes should be included. Default is all notes")
-				.addText((text) => 
-				text.setPlaceholder("/locations/*.md").setValue(existingFeatureServiceSetting.noteIncludePattern).onChange(async (value) => {
-					existingFeatureServiceSetting.noteIncludePattern = value;
-					await this.plugin.saveSettings();
-				}));
-				new Setting(fsSettingParent).setName("title field").setDesc("Field in the feature service used to store the title. Defaults to TITLE")
-				.addText((text) => 
-				text.setPlaceholder("note_title").setValue(existingFeatureServiceSetting.titleField).onChange(async (value) => {
-					existingFeatureServiceSetting.titleField = value;
-					await this.plugin.saveSettings();
-				}));
-				const deleteButton = fsSettingParent.createEl("button", {text:"remove"});
-				deleteButton.addEventListener('click', async (delEvt) => {
-					this.plugin.settings.featureServiceSync.remove(existingFeatureServiceSetting);
-					await this.plugin.saveSettings();
-					renderFeatureServiceSettingArea.bind(this)();
-				});
-			}
-		}
-		addButton.addEventListener('click', async (evt) => {
-			this.plugin.settings.featureServiceSync.push(new FeatureServiceSyncSetting());
-			await this.plugin.saveSettings();
-			renderFeatureServiceSettingArea.bind(this)();
-		});
-
-		renderFeatureServiceSettingArea.bind(this)();
-		
-		new Setting(containerEl).setName("")
-	}
-}
