@@ -11,6 +11,7 @@ import {
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import Graphic from "@arcgis/core/Graphic";
 import { Point } from "@arcgis/core/geometry";
+import { parseYaml, stringifyYaml } from "obsidian";
 
 export class FeatureServiceConnection {
 	settings: ArcGISInObsidianSettings;
@@ -50,7 +51,7 @@ export class FeatureServiceConnection {
 		});
 	}
 
-	async syncIndividualFile(
+	async syncIndividaulFileForConfig(
 		config: FeatureServiceSyncSetting,
 		file: TFile,
 		location: Point
@@ -58,85 +59,87 @@ export class FeatureServiceConnection {
 		// prep
 		let featureLayer = this.connections.get(config.featureServiceUrl);
 		let metadata = this.app.metadataCache.getFileCache(file);
-		let obsidianUrl = `obsidian://open?vault=${file.vault.getName()}&file=${file.path.replace(
-			/" "/g,
-			"%20"
-		)}`;
+		let obsidianUrl = `obsidian://open?vault=${file.vault.getName()}&file=${encodeURIComponent(file.path)}`;
 		let fieldstoSync = this.getFieldMapAsObj(config);
 
 		var edits: __esri.FeatureLayerApplyEditsEdits = {
 			addFeatures: [],
 			updateFeatures: [],
 		};
+
+        var featureGraphic: Graphic
 		// sync feature if indicated
 		// TODO = refactor to share code between add and update
 		if (metadata.frontmatter["OBJECTID"]) {
-			let existingFeature = (
+			featureGraphic = (
 				await featureLayer.queryFeatures({
 					outFields: ["*"],
 					where: `OBJECTID = ${metadata.frontmatter["OBJECTID"]}`,
 				})
 			).features.first();
-			if (existingFeature) {
-				existingFeature.attributes[config.titleField ?? "TITLE"] =
-					file.basename;
-				existingFeature.attributes["OBSIDIAN_LINK"] = obsidianUrl;
-				existingFeature.attributes["TEST_ATTRIBUE"] = "yolo";
-
-				// apply field map values
-				if (fieldstoSync) {
-					fieldstoSync.map((fieldPair, idx) => {
-						if (metadata.frontmatter[fieldPair.obsYaml]) {
-							existingFeature.attributes[fieldPair.arcField] =
-								metadata.frontmatter[fieldPair.obsYaml];
-						}
-					});
-				}
-
-				edits.updateFeatures.push(existingFeature);
-				featureLayer.applyEdits(edits);
-				return;
-			}
 		}
-		let graphic = new Graphic();
-		graphic.attributes = {
-			TITLE: file.basename,
-			OBSIDIAN_LINK: obsidianUrl,
-			TEST_ATTRIBUTE: "yolo",
-		};
-		// apply field map values
+
+        if (featureGraphic){
+            edits.updateFeatures.push(featureGraphic);
+        }
+        else {
+            featureGraphic = new Graphic();
+            featureGraphic.attributes = {}
+            edits.addFeatures.push(featureGraphic);
+        }
+
+
+        featureGraphic.attributes[config.titleField ?? "TITLE"] = file.basename;
+        featureGraphic.attributes["OBSIDIAN_LINK"] = obsidianUrl;
+
+        // apply field map values
 		if (fieldstoSync) {
 			fieldstoSync.map((fieldPair, idx) => {
 				if (metadata.frontmatter[fieldPair.obsYaml]) {
-					graphic.attributes[fieldPair.arcField] =
+					featureGraphic.attributes[fieldPair.arcField] =
 						metadata.frontmatter[fieldPair.obsYaml];
 				}
 			});
 		}
-		graphic.geometry = new Point({ x: location.x, y: location.y });
-		console.log("Created local feature");
-		console.dir(graphic);
+		featureGraphic.geometry = new Point({ x: location.x, y: location.y });
 
-		edits.addFeatures.push(graphic);
-		console.log("Adding feature to edits list");
-		console.dir(edits);
+        // Apply edits
 		let editsResults = await featureLayer.applyEdits(edits);
-		console.log("Finished applying edits with following result");
-		console.dir(editsResults);
 
 		if (editsResults.addFeatureResults) {
 			let addedFeature = editsResults.addFeatureResults.first();
-			let objectId = addedFeature.objectId;
-			let readedFile = await this.app.vault.read(file);
-			let newFile = readedFile.replace(
-				"---\ngeo:",
-				`---\nOBJECTID: ${objectId}\ngeo:`
-			);
-			await this.app.vault.modify(file, newFile);
 		}
+        let objectId = featureGraphic.getObjectId() ?? editsResults.addFeatureResults.first().objectId;
+        await this.rewriteFileYAML(file, featureGraphic.geometry as Point,featureGraphic, objectId.toString());
 	}
 
-	async syncOne(config: FeatureServiceSyncSetting) {
+    async rewriteFileYAML(file:TFile, newLocation?:Point, feature?:Graphic, objectId?:string){
+        // Read existing content
+        let originalContents = await this.app.vault.read(file);
+
+        // parse existing frontmatter
+        if (!originalContents.startsWith("---")){
+            return;
+        }
+
+        // splice out frontmatter
+        let [_, yamlFrontmatter, restOfFile] = originalContents.split("---", 3)
+        let frontMatter = parseYaml(yamlFrontmatter);
+
+        // update frontmatter
+        if (feature){
+            frontMatter['OBJECTID'] = objectId;
+        }
+        if (newLocation){
+            frontMatter['geoXYCached'] = `x:${newLocation.x},y:${newLocation.y}`
+        }
+
+        // rewrite file with new frontmatter
+        let newFileContents = `---\n${stringifyYaml(frontMatter).trimEnd()}\n---\n${restOfFile.trimStart()}`
+        await this.app.vault.modify(file, newFileContents)
+    }
+
+	async syncOneConfiguration(config: FeatureServiceSyncSetting) {
 		// scan vault for matching documents
 		let allFiles = this.app.vault.getFiles();
 
@@ -161,6 +164,18 @@ export class FeatureServiceConnection {
 						return null;
 					}
 
+                    let cachedValue = metadata.frontmatter['geoXYCached'];
+                    if (cachedValue){
+                        let [xpart,ypart] = cachedValue.split(',', 2)
+                        let newX = xpart.trim().split(':', 2)[1]
+                        let newY = ypart.trim().split(':', 2)[1]
+                        let cachedPoint = new Point();
+                        cachedPoint.x = parseFloat(newX);
+                        cachedPoint.y = parseFloat(newY);
+
+                        return {file:file, location: cachedPoint}
+                    }
+
 					if (typeof geotag == "string") {
 						// process single location
 						let location = await addressToLocations(
@@ -183,7 +198,7 @@ export class FeatureServiceConnection {
 
 		await Promise.all(
 			geoFiles.map((fileGeoPair, idx, arr) => {
-				this.syncIndividualFile(
+				this.syncIndividaulFileForConfig(
 					config,
 					fileGeoPair.file,
 					fileGeoPair.location
@@ -198,7 +213,7 @@ export class FeatureServiceConnection {
 
 		// read sync configurations
 		for (var config of this.settings.featureServiceSync) {
-			this.syncOne(config);
+			this.syncOneConfiguration(config);
 		}
 
 		// sync each configuration
