@@ -6,6 +6,7 @@ Experimental project to integrate Obsidian and ArcGIS using the ArcGIS API for J
 
 ## Features
 
+- **Sync notes with feature service**: Specify geographic locations in note frontmatter, then sync notes to a feature service to automatically map your Obsidian vault. Features include a link back to the vault, so you can easily navigate between your map and your vault.
 - **Embed a basic map in a note**: To embed a map view showing a basemap, add a code block with the language set to `arcgis`.
 
       ```arcgis
